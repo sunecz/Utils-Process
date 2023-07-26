@@ -1,0 +1,10 @@
+# Ignore folders
+/.settings/
+/bin/
+/etc/
+/build/
+/versions/
+
+# Ignore files
+.classpath
+.project

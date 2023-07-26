@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<project name="generate_jar" default="all">
+	<property name="jarname" value="sune-process-api"    />
+	<property name="dir.rtd" value="."                   />
+	<property name="dir.bin" value="${dir.rtd}/bin"      />
+	<property name="dir.ver" value="${dir.rtd}/versions" />
+	<property name="dir.src" value="${dir.rtd}/src"      />
+	<target name="all" depends="jar,src">
+		<!-- Runs all the other targets. -->
+	</target>
+    <target name="jar">
+    	<echo message="Generating JAR file..." />
+        <jar destfile="${dir.ver}/${jarname}.jar">
+        	<!-- Include the *.class files -->
+    		<fileset dir="${dir.bin}" />
+        </jar>
+    </target>
+	<target name="src" depends="jar">
+    	<echo message="Generating source ZIP file..." />
+		<zip destfile="${dir.ver}/${jarname}-source.jar" basedir="${dir.src}" />
+    </target>
+</project>
