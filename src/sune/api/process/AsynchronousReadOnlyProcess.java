@@ -1,16 +1,14 @@
 package sune.api.process;
 
 import java.nio.file.Path;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 final class AsynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 	
 	private final Consumer<String> listener;
-	private final Object mutex = new Object();
 	
 	private volatile Thread thread;
-	private final AtomicReference<Exception> exception = new AtomicReference<>();
+	private volatile Exception exception;
 	
 	AsynchronousReadOnlyProcess(Path file, Consumer<String> listener) {
 		super(file);
@@ -18,17 +16,25 @@ final class AsynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 	}
 	
 	private final void execute() {
+		state.set(STATE_RUNNING);
+		
 		try {
 			loopRead();
 			waitFor();
-			dispose();
+			state.set(STATE_DONE & ~STATE_RUNNING);
 		} catch(Exception ex) {
-			exception.set(ex);
+			exception = ex;
+		} finally {
+			try {
+				dispose();
+			} catch(Exception ex) {
+				exception = ex;
+			}
 		}
 	}
 	
 	@Override
-	protected final void readLine(String line) {
+	protected final void processLine(String line) {
 		if(listener != null) {
 			listener.accept(line);
 		}
@@ -36,11 +42,11 @@ final class AsynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 	
 	@Override
 	protected String runAndGetResult() throws Exception {
-		exception.set(null);
+		exception = null;
 		
-		synchronized(mutex) {
-    		thread = new Thread(this::execute);
-    		thread.start();
+		synchronized(this) {
+			thread = new Thread(this::execute);
+			thread.start();
 		}
 		
 		return null;
@@ -48,13 +54,18 @@ final class AsynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 	
 	@Override
 	protected void dispose() throws Exception {
-		super.dispose();
-		
-		synchronized(mutex) {
-    		if(thread != null) {
-    			thread.interrupt();
-    			thread = null;
-    		}
+		try {
+			Thread t;
+			if((t = thread) != null) {
+				synchronized(this) {
+					if((t = thread) != null) {
+						t.interrupt();
+						thread = null;
+					}
+				}
+			}
+		} finally {
+			super.dispose();
 		}
 	}
 	
@@ -62,8 +73,14 @@ final class AsynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 	public int waitFor() throws Exception {
 		int result = super.waitFor();
 		
-		Exception ex = exception.get();
-		if(ex != null) throw ex;
+		Exception ex;
+		if((ex = exception) != null) {
+			synchronized(this) {
+				if((ex = exception) != null) {
+					throw ex;
+				}
+			}
+		}
 		
 		return result;
 	}

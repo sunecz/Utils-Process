@@ -4,6 +4,8 @@ import java.nio.file.Path;
 
 final class SynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 	
+	private static final char LINE_SEPARATOR = '\n'; // Always use the Unix line separator
+	
 	private StringBuilder string;
 	
 	SynchronousReadOnlyProcess(Path file) {
@@ -11,21 +13,28 @@ final class SynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 	}
 	
 	@Override
-	protected final void readLine(String line) {
+	protected final void processLine(String line) {
 		string.append(line);
 		string.append(LINE_SEPARATOR);
 	}
 	
 	@Override
 	protected final String runAndGetResult() throws Exception {
-		// Initialize fields before starting the process
-		if(string == null) string = new StringBuilder();
-		else               string.setLength(0);
+		state.set(STATE_RUNNING);
 		
-		loopRead();
-		waitFor();
-		dispose();
+		if(string == null) {
+			string = new StringBuilder();
+		} else {
+			string.setLength(0);
+		}
 		
-		return string.toString();
+		try {
+			loopRead();
+			waitFor();
+			state.set(STATE_DONE & ~STATE_RUNNING);
+			return string.toString();
+		} finally {
+			dispose();
+		}
 	}
 }

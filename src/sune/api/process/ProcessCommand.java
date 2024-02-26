@@ -1,35 +1,14 @@
 package sune.api.process;
 
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.List;
 
-final class ProcessUtils {
-	
-	private static final List<Runnable> shutdownRunnables = new ArrayList<>();
-	private static boolean shutdownInitialized;
+final class ProcessCommand {
 	
 	// Forbid anyone to create an instance of this class
-	private ProcessUtils() {
+	private ProcessCommand() {
 	}
 	
-	private static final void shutdownSequence() {
-		if(!shutdownRunnables.isEmpty()) {
-			shutdownRunnables.forEach(Runnable::run);
-		}
-	}
-	
-	public static final void registerShutdownHook(Runnable runnable) {
-		if(runnable == null)
-			throw new IllegalArgumentException("Runnable cannot be null");
-		shutdownRunnables.add(runnable);
-		if(!shutdownInitialized) {
-			Runtime.getRuntime().addShutdownHook(new Thread(ProcessUtils::shutdownSequence));
-			shutdownInitialized = true;
-		}
-	}
-	
-	public static final void extractCommands(Collection<String> collection, String command) {
+	public static final void extract(Collection<String> collection, String command) {
 		StringBuilder sb = new StringBuilder();
 		
 		boolean indq = false;
@@ -65,8 +44,8 @@ final class ProcessUtils {
 				if(c == ' ') {
 					// Only add non-empty strings
 					if(sb.length() > 0) {
-	    				collection.add(sb.toString());
-	    				sb.setLength(0);
+						collection.add(sb.toString());
+						sb.setLength(0);
 					}
 				} else {
 					if(!insq && c == '\"') indq = true; else

@@ -1,168 +1,196 @@
 package sune.api.process;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Objects;
 
 abstract class ReadOnlyProcessBase implements ReadOnlyProcess {
 	
-	protected static final Charset CHARSET        = StandardCharsets.UTF_8;
-	protected static final String  LINE_SEPARATOR = "\n"; // Always use Unix line separator
-	protected static final int     RESULT_NONE    = Integer.MIN_VALUE;
+	protected static final Charset CHARSET     = StandardCharsets.UTF_8;
+	protected static final int     RESULT_NONE = Integer.MIN_VALUE;
 	
-	// Properties
+	protected static final int STATE_NONE         = 0;
+	protected static final int STATE_INITIALIZING = 1 << 0;
+	protected static final int STATE_RUNNING      = 1 << 1;
+	protected static final int STATE_DONE         = 1 << 2;
+	protected static final int STATE_DISPOSED     = 1 << 3;
+	
 	protected final Path file;
+	protected final InternalState state = new InternalState(STATE_NONE);
 	
-	// Process
-	private final AtomicInteger result = new AtomicInteger(RESULT_NONE);
-	private volatile Process process;
-	private volatile BufferedReader reader;
-	
-	// Flags
-	private final AtomicBoolean initializing = new AtomicBoolean();
-	private final AtomicBoolean running      = new AtomicBoolean();
-	private final AtomicBoolean done         = new AtomicBoolean();
+	protected volatile int result = RESULT_NONE;
+	protected volatile Process process;
+	protected volatile BufferedReader reader;
 	
 	protected ReadOnlyProcessBase(Path file) {
-		if(file == null)
-			throw new IllegalArgumentException("File cannot be null");
-		this.file = file.toAbsolutePath();
-		ProcessUtils.registerShutdownHook(() -> {
-			try {
-				dispose();
-			} catch(Exception ex) {
-				// Ignore, since shutting down
-			}
-		});
+		this.file = Objects.requireNonNull(file).toAbsolutePath();
+		ProcessManager.register(this);
 	}
 	
-	private final boolean canLoop() {
-		return running.get() || (process != null && process.isAlive());
-	}
-	
-	protected final void init(Path dir, String command) throws Exception {
-		if(!initializing.compareAndSet(false, true))
-			return;
-		
-		// Reset the result
-		result.set(RESULT_NONE);
-		
-		// Reset the flags
-		running.set(false);
-		done   .set(false);
-		
-		// Prepare the given commands
-		List<String> commands = new LinkedList<>();
+	protected final ProcessBuilder processBuilder(Path dir, String command) {
+		List<String> commands = new ArrayList<>();
 		commands.add(file.toString());
-		ProcessUtils.extractCommands(commands, command);
+		ProcessCommand.extract(commands, command);
 		
-		// Create a new process
-		ProcessBuilder builder = new ProcessBuilder(commands)
-			.directory((dir != null
-							? dir
-							: file.getParent())
-			           	.toFile())
+		return new ProcessBuilder(commands)
+			.directory((dir != null ? dir : file.getParent()).toFile())
 			.redirectErrorStream(true);
-		
-		// Immediately start the process
-		process = builder.start();
-		
-		// Prepare the reader ahead
-		reader = new BufferedReader(new InputStreamReader(process.getInputStream(), CHARSET));
-		
-		// Reset the flag
-		initializing.set(false);
 	}
 	
-	protected final void markAsRunning() {
-		running.set(true);
-		done   .set(false);
-	}
-	
-	protected final void markAsDone() {
-		running.set(false);
-		done   .set(true);
-	}
-	
-	protected abstract String runAndGetResult() throws Exception;
-	protected abstract void readLine(String line);
-	
-	protected final void loopRead() throws Exception {
-		markAsRunning();
+	protected final boolean init(Path dir, String command) throws Exception {
+		if(!state.compareAndSet(0, STATE_INITIALIZING | STATE_RUNNING, STATE_INITIALIZING)) {
+			return false;
+		}
 		
-		for(String line = null; canLoop();) {
-			// Read the next line, this may throw an exception or read null
-			line = reader != null ? reader.readLine() : null;
+		try {
+			synchronized(this) {
+				result = RESULT_NONE;
+				process = processBuilder(dir, command).start();
+				reader = new BufferedReader(new InputStreamReader(process.getInputStream(), CHARSET));
+			}
 			
-			// Check whether the EOF has been reached, if so check whether the process
-			// is still active and if it is not, just terminate the loop.
-			if(line == null && (process == null || !process.isAlive()))
-				break;
-			
-			// Accept only non-null lines
-			if(line != null) {
-				readLine(line);
+			return true;
+		} finally {
+			state.clear(STATE_NONE);
+		}
+	}
+	
+	protected final boolean isProcessAlive() {
+		Process p;
+		if((p = process) == null) {
+			synchronized(this) {
+				if((p = process) == null) {
+					return false;
+				}
 			}
 		}
 		
-		markAsDone();
+		return p.isAlive();
 	}
 	
-	protected final String execute0(Path dir, String command) throws Exception {
-		if(initializing.get() || running.get())
-			return null;
+	protected final String readLine() throws IOException {
+		BufferedReader r;
+		if((r = reader) == null) {
+			synchronized(this) {
+				if((r = reader) == null) {
+					return null;
+				}
+			}
+		}
 		
-		init(dir, command);
+		return r.readLine();
+	}
+	
+	protected final void loopRead() {
+		while(true) {
+			String line = null;
+			
+			if(state.is(STATE_RUNNING) || isProcessAlive()) {
+				try {
+					line = readLine();
+				} catch(IOException ex) {
+					break; // Do not continue
+				}
+			}
+			
+			if(line == null) {
+				break; // EOF or process no longer alive
+			}
+			
+			processLine(line);
+		}
+	}
+	
+	protected final String doExecute(Path dir, String command) throws Exception {
+		if(!init(dir, command)) {
+			return null;
+		}
+		
 		return runAndGetResult();
 	}
 	
+	protected abstract String runAndGetResult() throws Exception;
+	protected abstract void processLine(String line);
+	
 	protected void dispose() throws Exception {
-		running.set(false);
+		// Reset the state only if running. If the process is done or disposed, the state
+		// will be the same.
+		state.compareAndUnset(STATE_RUNNING, STATE_RUNNING, STATE_RUNNING);
 		
-		// Dispose the process
-		if(process != null) {
-			process.destroyForcibly();
-			process = null;
-		}
-		
-		// Dispose the reader
-		if(reader != null) {
-			reader.close();
-			reader = null;
+		Exception exception = null;
+		try {
+			synchronized(this) {
+				BufferedReader r;
+				if((r = reader) != null) {
+					try {
+						r.close();
+					} catch(Exception ex) {
+						exception = ex;
+					} finally {
+						reader = null;
+					}
+				}
+				
+				Process p;
+				if((p = process) != null) {
+					try {
+						p.destroyForcibly();
+					} catch(Exception ex) {
+						exception = ex;
+					} finally {
+						process = null;
+					}
+				}
+			}
+		} finally {
+			state.set(STATE_DISPOSED);
+			
+			if(exception != null) {
+				throw exception; // Rethrow
+			}
 		}
 	}
 	
 	@Override
 	public String execute(String command) throws Exception {
-		return execute0(null, command);
+		return doExecute(null, command);
 	}
 	
 	@Override
 	public String execute(String command, Path dir) throws Exception {
-		return execute0(dir, command);
+		return doExecute(dir, command);
 	}
 	
 	@Override
 	public int waitFor() throws Exception {
-		int res = result.get();
-		if(res != RESULT_NONE)
-			return res;
-		
-		if(process != null) {
-			res = process.waitFor();
-			result.set(res);
+		int r;
+		if((r = result) != RESULT_NONE) {
+			synchronized(this) {
+				if((r = result) != RESULT_NONE) {
+					return r;
+				}
+			}
 		}
 		
-		markAsDone();
-		dispose();
+		Process p;
+		if((p = process) != null) {
+			synchronized(this) {
+				p = process;
+			}
+			
+			if(p != null) {
+				r = p.waitFor(); // Wait outside the synchronized block
+				result = r;
+			}
+		}
 		
-		return res;
+		return r;
 	}
 	
 	@Override
@@ -177,11 +205,11 @@ abstract class ReadOnlyProcessBase implements ReadOnlyProcess {
 	
 	@Override
 	public boolean isRunning() {
-		return running.get();
+		return state.is(STATE_RUNNING);
 	}
 	
 	@Override
 	public boolean isDone() {
-		return done.get();
+		return state.is(STATE_DONE);
 	}
 }
