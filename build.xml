@@ -1,22 +1,25 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no" ?>
-<project name="generate_jar" default="all">
-	<property name="jarname" value="sune-process-api"    />
-	<property name="dir.rtd" value="."                   />
-	<property name="dir.bin" value="${dir.rtd}/bin"      />
-	<property name="dir.ver" value="${dir.rtd}/versions" />
-	<property name="dir.src" value="${dir.rtd}/src"      />
-	<target name="all" depends="jar,src">
+<project name="Utils-Process" default="all">
+	<property name="name.jar" value="sune-process-api" />
+	
+	<property name="path.rtd"   value="."                   />
+	<property name="path.bin"   value="${path.rtd}/bin"      />
+	<property name="path.src"   value="${path.rtd}/src"      />
+	<property name="path.build" value="${path.rtd}/build"    />
+	
+	<target name="all" depends="build-jar, build-src">
 		<!-- Runs all the other targets. -->
 	</target>
-    <target name="jar">
-    	<echo message="Generating JAR file..." />
-        <jar destfile="${dir.ver}/${jarname}.jar">
-        	<!-- Include the *.class files -->
-    		<fileset dir="${dir.bin}" />
-        </jar>
-    </target>
-	<target name="src" depends="jar">
-    	<echo message="Generating source ZIP file..." />
-		<zip destfile="${dir.ver}/${jarname}-source.jar" basedir="${dir.src}" />
-    </target>
+	
+	<target name="build-jar">
+		<echo message="Generating JAR file..." />
+		<jar destfile="${path.build}/${name.jar}.jar">
+			<fileset dir="${path.bin}" />
+		</jar>
+	</target>
+	
+	<target name="build-src" depends="build-jar">
+		<echo message="Generating source ZIP file..." />
+		<zip destfile="${path.build}/${name.jar}-source.jar" basedir="${path.src}" />
+	</target>
 </project>
