@@ -126,17 +126,6 @@ abstract class ReadOnlyProcessBase implements ReadOnlyProcess {
 		Exception exception = null;
 		try {
 			synchronized(this) {
-				BufferedReader r;
-				if((r = reader) != null) {
-					try {
-						r.close();
-					} catch(Exception ex) {
-						exception = ex;
-					} finally {
-						reader = null;
-					}
-				}
-				
 				Process p;
 				if((p = process) != null) {
 					try {
@@ -145,6 +134,17 @@ abstract class ReadOnlyProcessBase implements ReadOnlyProcess {
 						exception = ex;
 					} finally {
 						process = null;
+					}
+				}
+				
+				BufferedReader r;
+				if((r = reader) != null) {
+					try {
+						r.close();
+					} catch(Exception ex) {
+						exception = ex;
+					} finally {
+						reader = null;
 					}
 				}
 			}
