@@ -63,6 +63,10 @@ final class AsynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 						thread = null;
 					}
 				}
+				
+				if(t != null) {
+					t.join(); // Wait outside the synchronized block
+				}
 			}
 		} finally {
 			super.dispose();
