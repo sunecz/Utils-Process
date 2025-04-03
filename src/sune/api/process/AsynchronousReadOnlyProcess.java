@@ -65,7 +65,11 @@ final class AsynchronousReadOnlyProcess extends ReadOnlyProcessBase {
 				}
 				
 				if(t != null) {
-					t.join(); // Wait outside the synchronized block
+					try {
+						t.join(); // Wait outside the synchronized block
+					} catch(InterruptedException ex) {
+						// Ignore
+					}
 				}
 			}
 		} finally {
